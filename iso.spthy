@@ -1,0 +1,176 @@
+// бтв просто докидал немного в код из презентации
+theory ISO
+begin
+
+builtins: signing, diffie-hellman
+
+rule Client_Step_1:
+let
+    pk_C = pk(~pr_C)
+    g_x = 'g'^(~x)
+in
+    [
+        Fr(~pr_C),
+        Fr(~x)
+    ]
+    --[
+        Send_1($Client, $Server, <pk_C, g_x>)
+    ]->
+    [
+        Out(<pk_C, g_x>),
+        !Client_Step_1(~pr_C, pk_C, ~x, g_x)
+    ]
+
+rule Client_Step_2:
+let
+    s_m = <g_x, g_y, pk_C>
+    c_m = <g_y, g_x, pk_S>
+    c_m_s = sign(c_m, ~pr_C)
+    c_k = g_y^(~x)
+in
+    [
+        !Client_Step_1(~pr_C, pk_C, ~x, g_x),
+        In(<pk_S, g_y, s_m_sg>)
+    ]
+    --[
+        Eq(verify(s_m_sg, s_m, pk_S), true),
+        Receive_2($Client, $Server, <pk_S, g_y, s_m_sg>),
+        Send_3($Client, $Server, c_m_s),
+        Client_Finished($Client, c_k)
+    ]->
+    [
+        Out(c_m_s),
+        !Client_Step_2(c_k, pk_S, g_y)
+    ]
+
+
+rule Server_Step_1:
+let
+    pk_S = pk(~pr_S)
+    g_y = 'g'^(~y)
+    s_k = g_x^(~y)
+    s_m = <g_x, g_y, pk_C>
+    s_m_sg = sign(s_m, ~pr_S)
+in
+    [
+        Fr(~pr_S),
+        Fr(~y),
+        In(<pk_C, g_x>)
+    ]
+    --[
+        Receive_1($Server, $Client, <pk_C, g_x>),
+        Send_2($Server, $Client, <pk_S, g_y, s_m_sg>)
+    ]->
+    [
+        !Serv_Step_1(~pr_S, pk_S, pk_C, ~y, g_y, g_x, s_k),
+        Out(<pk_S, g_y, s_m_sg>)
+    ]
+
+rule Server_Step_2:
+let
+    c_m = <g_y, g_x, pk_S>
+in 
+    [
+        !Serv_Step_1(~pr_S, pk_S, pk_C, ~y, g_y, g_x, s_k),
+        In(c_m_s)
+    ]
+    --[
+        Eq(verify(c_m_s, c_m, pk_C), true),
+        Receive_3($Server, $Client, c_m_s),
+        Server_Finished($Server, s_k)
+    ]->
+    [
+        !Serv_Step_2(pk_C)
+    ]
+
+lemma executable_Finished:
+    exists-trace
+    "Ex Client Server key #i #j. 
+        Client_Finished(Client, key) @i & 
+        Server_Finished(Server, key) @j
+    "
+// клиент отправил, а сервер получил
+lemma executable_1:
+    exists-trace
+    "Ex Client Server Message #i #j. 
+        Receive_1(Server, Client, Message) @i & 
+        Send_1(Client, Server, Message) @j
+    "
+
+// серв отправил 2 сообщение, а клиент получил
+lemma executable_2:
+    exists-trace
+    "Ex Client Server Message #i #j. 
+        Receive_2(Server, Client, Message) @i & 
+        Send_2(Client, Server, Message) @j
+    "
+
+// клиент отправил третье сообщение, сервер его получил
+lemma executable_3:
+    exists-trace
+    "Ex Client Server Message #i #j. 
+        Receive_3(Server, Client, Message) @i & 
+        Send_3(Client, Server, Message) @j
+    "
+// если клиент законнектился с сервером, противник не узнает сессионный ключ
+lemma Key_secrecy:
+    all-traces
+    "All Client Server key 
+         #t1 #t2.
+    (
+        Client_Finished(Client, key) @t1 & 
+        Server_Finished(Server, key) @t2
+    )
+    ==>
+    (
+        not
+        (
+            Ex #k.
+            (
+                K(key) @ #k
+            )
+        )
+    )
+    "
+
+// если серв получил первое сообщение, то его сенднул клиент
+lemma auth_1:
+        "All Client Server Message key
+                #t1 #t2 #t.
+        (
+            Client_Finished(Client, key) @t1 & 
+            Server_Finished(Server, key) @t2 &
+            Receive_1(Server, Client, Message) @t
+        )
+        ==>
+        (Ex #j. Send_1(Client, Server, Message) @j & j<t)
+        "
+// второе сообщение отправил именно сервер
+lemma auth_2:
+    "All Client Server key Message 
+         #t1 #t2 #t. 
+    (
+        Client_Finished(Client, key) @t1 & 
+        Server_Finished(Server, key) @t2 &
+        Receive_2(Client, Server, Message) @t
+    )
+    ==> 
+        (Ex #j. Send_2(Server, Client, Message) @j & j<t)
+    "
+
+// третье сообщение отправил исключительски клиент
+lemma auth_3:
+    "All Client Server key Message 
+         #t1 #t2 #t. 
+    (
+        Client_Finished(Client, key) @t1 & 
+        Server_Finished(Server, key) @t2 &
+        Receive_3(Server, Client, Message) @t
+    )
+    ==> 
+        (Ex #j. Send_3(Client, Server, Message) @j & j<t)
+    "
+end
+
+restriction Equality:
+    "All x y #i. Eq(x,y) @i ==> x = y"
